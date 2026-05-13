@@ -10,18 +10,19 @@ def generate_basic_config(hostname: str, device_type: str = "router",
                           enable_secret: str = "class",
                           console_password: str = "cisco",
                           vty_password: str = "cisco",
-                          debug: bool = False) -> str:
+                          debug: bool = False,
+                          banner_text: str | None = None) -> str:
     """
     Generates the baseline configuration for a switch/router.
     Includes clock settings, passwords, console/vty settings, encryption, and banners.
     """
     lines = []
 
-    lines.append("enable")
-    lines.append(f"clock set {formatted_date}")
-    lines.append("configure terminal")
+    lines.append("ena")
+    lines.append("conf t")
     lines.append(f"hostname {hostname}")
     lines.append("no ip domain-lookup")
+    lines.append("service password-encryption")
     lines.append(f"enable password {enable_password}")
     lines.append(f"enable secret {enable_secret}")
 
@@ -42,17 +43,15 @@ def generate_basic_config(hostname: str, device_type: str = "router",
     lines.append(" logging synchronous")
     lines.append(" exit")
 
-    # password encryption
-    lines.append("service password-encryption")
-
     # banner
     device_label = "router" if device_type == "router" else "switch"
-    banner_text = f"DO NOT ACCESS THIS {device_label.upper()} WITHOUT AUTHORIZATION !!!"
+    if banner_text is None:
+        banner_text = "Unauthorized access is strictly prohibited."
 
     # debug banner with all password info
     if debug:
         banner_text += f"\n[DEBUG INFO] Enable PW: {enable_password} | Secret: {enable_secret} | Console: {console_password} | VTY: {vty_password}"
 
-    lines.append(f"banner motd #{banner_text}#\n!")
+    lines.append(f"banner motd #{banner_text}#")
 
     return "\n".join(lines)
