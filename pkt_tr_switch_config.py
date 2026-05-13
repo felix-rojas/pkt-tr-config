@@ -1,6 +1,6 @@
 from router import Switch
 from pkt_tr_base_config import generate_basic_config
-from pkt_tr_utils import render_interface_name, render_interface_range
+from pkt_tr_utils import render_interface_name, render_interface_range, normalize_interface_name
 
 def generate_switch_commands(
     s: Switch,
@@ -14,12 +14,6 @@ def generate_switch_commands(
     
     # Inject baseline configuration from PDF
     lines.append(generate_basic_config(s.name, "switch", banner_text=banner_text))
-    
-    # Create Native VLAN (Security Best Practice)
-    # native_vlan_id = getattr(s, 'native_vlan', 999)
-    # lines.append(f"vlan {native_vlan_id}")
-    # lines.append(" name Native_Blackhole")
-    # lines.append(" exit\n!")
 
     # Create user VLANs
     skip_vlan_1 = getattr(s, "skip_vlan_1", False)
@@ -31,10 +25,13 @@ def generate_switch_commands(
         lines.append(f" name {vlan['name']}")
         lines.append(" exit\n!")
     
-    # Assign trunk ports (defaults to GigabitEthernet0/1 if switch.trunk_ports not set)
-    trunk_ports = [render_interface_name(tp) for tp in getattr(s, 'trunk_ports', ['GigabitEthernet0/1'])]
+    # Get normalized trunk ports to ensure accurate comparisons
+    trunk_ports_raw = getattr(s, 'trunk_ports', ['GigabitEthernet0/1'])
+    trunk_ports_normalized = [normalize_interface_name(tp) for tp in trunk_ports_raw]
+    trunk_ports_rendered = [render_interface_name(tp) for tp in trunk_ports_normalized]
+
     lines.append("! -------Trunk ports-------")
-    for tp in trunk_ports:
+    for tp in trunk_ports_rendered:
         lines.append(f"interface {tp}")
         lines.append(" switchport mode trunk")
         lines.append(" no shut")
@@ -42,7 +39,6 @@ def generate_switch_commands(
     
     # Assign access ports sequentially or based on vlan config
     port_counter = 1
-    used_fast_ports = []
     access_ranges = getattr(s, "access_ranges", [])
 
     lines.append("! -------Access ports-------")
@@ -56,13 +52,24 @@ def generate_switch_commands(
             lines.append("")
     else:
         for vlan in s.vlans:
-            assigned_ports = vlan.get('ports', [f"FastEthernet0/{port_counter}"])
+            assigned_ports = vlan.get('ports')
+            if not assigned_ports:
+                # Find the next available FastEthernet port that is NOT a trunk
+                while True:
+                    candidate_port = f"FastEthernet0/{port_counter}"
+                    if normalize_interface_name(candidate_port) not in trunk_ports_normalized:
+                        assigned_ports = [candidate_port]
+                        port_counter += 1
+                        break
+                    port_counter += 1
+            else:
+                port_counter += len(assigned_ports)
+
             for port in [render_interface_name(p) for p in assigned_ports]:
                 lines.append(f"interface {port}")
                 lines.append(" switchport mode access")
                 lines.append(f" switchport access vlan {vlan['id']}")
                 lines.append("")
-            port_counter += len(assigned_ports)
 
     management = getattr(s, "management", None)
     if management:

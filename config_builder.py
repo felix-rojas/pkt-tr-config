@@ -83,6 +83,7 @@ def build_topology(config: dict) -> tuple[list[Router], list[Switch], pd.DataFra
         router = Router(router_cfg["name"], fast, gigabit, serial)
         if router_cfg.get("is_isp") or router.router_name.lower() == "isp":
             isp_router_names.add(router.router_name)
+            router.is_isp = True 
         _apply_router_defaults(router, router_cfg, config)
         routers.append(router)
         routers_by_name[router.router_name] = router

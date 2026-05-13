@@ -3,7 +3,7 @@ Global, Base, BaseIP=192.168.1.0, AutoStatic=True
 
 # Routers
 Router, ISP, Serial=1, IsISP=True
-Router, RFrontera, Fast=1, Gigabit=1, Serial=1, StaticRoute=0.0.0.0/0.0.0.0/Serial0/0/0
+Router, RFrontera, Fast=1, Gigabit=1, Serial=2, StaticRoute=0.0.0.0/0.0.0.0/Serial0/0/1
 
 # Switches
 Switch, SCompany, MgmtVlan=1, SkipVlan1=True, TrunkPorts=GigabitEthernet0/1;FastEthernet0/1;FastEthernet0/2
@@ -27,7 +27,7 @@ VLAN, SEste, 20, Users, 120
 VLAN, SEste, 30, Services, 5
 
 # Links (Category, Type, SrcName, SrcPort, DestName, DestPort, [Optional Parameters])
-Link, Serial, ISP, Serial0/0/0, RFrontera, Serial0/0/0, Network=65.255.255.252/30
+Link, Serial, ISP, Serial0/0/0, RFrontera, Serial0/0/1, Network=65.255.255.252/30
 Link, Trunk, RFrontera, GigabitEthernet0/0/0, SCompany, GigabitEthernet0/1
 Link, Switch, SOeste, FastEthernet0/1, SCompany, FastEthernet0/1
 Link, Switch, SEste, FastEthernet0/1, SCompany, FastEthernet0/2

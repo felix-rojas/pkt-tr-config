@@ -63,6 +63,11 @@ def generate_router_commands(
                 lines.append(f"int {port}")
                 lines.append(f"desc Interface that connects to {remote_name}")
                 lines.append(f"ip address {ip} {mask}")
+                
+                # Apply clock rate for the ISP router (DCE side)
+                if getattr(r, 'is_isp', False):
+                    lines.append("clock rate 64000")
+                
                 lines.append("no shut")
                 lines.append("")
 
