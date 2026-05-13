@@ -1,0 +1,29 @@
+# Format: Category, Name/LinkType, Params (Key=Value)...
+Global, Base, BaseIP=140.7.32.0/19, AutoStatic=False, OSPF=True, DhcpEnabled=True, DnsEnabled=True, DnsServer=8.8.8.8, Commands=packet_tracer_commands.txt, Answers=subnetting.csv, Banner=I Love Python.
+
+# Routers
+Router, RA, Fast=0, Gigabit=1, Serial=1
+Router, RB, Fast=0, Gigabit=2, Serial=2
+Router, RC, Fast=0, Gigabit=1, Serial=2
+Router, RD, Fast=0, Gigabit=1, Serial=1
+
+# Switches
+Switch, SW1
+Switch, SW2
+
+# VLAN definitions (Category, SwitchName, VlanID, VlanName, Hosts)
+VLAN, SW1, 10, Sales, 1000
+VLAN, SW1, 20, Engineering, 250
+VLAN, SW2, 99, Management, 1200
+
+# Subnets (Category, RouterName, Hosts=X, Port=Y)
+Subnet, RB, Hosts=500, Port=GigabitEthernet0/0/0
+Subnet, RB, Hosts=2400, Port=GigabitEthernet0/0/1
+Subnet, RC, Hosts=8, Port=GigabitEthernet0/0/0
+
+# Links (Category, Type, SrcName, SrcPort, DestName, DestPort, [Optional Parameters])
+Link, Trunk, RA, GigabitEthernet0/0/0, SW1, GigabitEthernet0/1
+Link, Trunk, RD, GigabitEthernet0/0/0, SW2, GigabitEthernet0/1
+Link, Serial, RA, Serial0/0/0, RB, Serial0/0/0
+Link, Serial, RB, Serial0/0/1, RC, Serial0/0/0
+Link, Serial, RC, Serial0/0/1, RD, Serial0/0/0
