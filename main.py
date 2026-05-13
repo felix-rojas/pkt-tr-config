@@ -16,6 +16,7 @@ def parse_minimal_csv(filepath):
         "switches": [],
         "subnets": [],
         "links": [],
+        "devices": [],
         "routing": {"auto_static": True, "auto_static_out_interface": True, "ospf": False},
         "dhcp": {"enabled": False, "dns_enabled": False, "dns_server": "8.8.8.8"},
         "output": {
@@ -34,9 +35,7 @@ def parse_minimal_csv(filepath):
             entity = row[0].strip().lower()
             name = row[1].strip() if len(row) > 1 else ""
             
-            # Extract key=value parameters from the remaining columns.
-            # We reconstruct items that might have been accidentally split by commas 
-            # (like a Banner containing commas but no quotes).
+            # Reconstruct items that might have been accidentally split by commas
             params = {}
             current_key = None
             for item in row[2:]:
@@ -48,8 +47,6 @@ def parse_minimal_csv(filepath):
                     current_key = k.strip().lower()
                     params[current_key] = v.strip()
                 elif current_key:
-                    # If there's no '=', append it to the previous key's value
-                    # This gracefully handles unquoted commas in things like Banners
                     params[current_key] += f", {item}"
 
             if entity == 'global':
@@ -59,8 +56,6 @@ def parse_minimal_csv(filepath):
                 if 'dhcpenabled' in params: config['dhcp']['enabled'] = params['dhcpenabled'].lower() == 'true'
                 if 'dnsenabled' in params: config['dhcp']['dns_enabled'] = params['dnsenabled'].lower() == 'true'
                 if 'dnsserver' in params: config['dhcp']['dns_server'] = params['dnsserver']
-                
-                # --- Output Overrides ---
                 if 'commands' in params: config['output']['commands'] = params['commands']
                 if 'answers' in params: config['output']['answers'] = params['answers']
                 if 'banner' in params: config['output']['banner'] = params['banner']
@@ -77,9 +72,7 @@ def parse_minimal_csv(filepath):
                 if params.get('isisp', '').lower() == 'true':
                     router_cfg['is_isp'] = True
                 
-                # Handling custom static routes if defined in params (e.g., StaticRoute=0.0.0.0/0.0.0.0/Serial0/0/0)
                 if 'staticroute' in params:
-                    # Limiting split to 2 ensures interface names like Serial0/0/0 stay intact
                     dest, mask, out_if = params['staticroute'].split('/', 2)
                     router_cfg['static_routes'] = [{"dest": dest, "mask": mask, "out_interface": out_if}]
                 
@@ -105,7 +98,6 @@ def parse_minimal_csv(filepath):
                 config['switches'].append(switch_cfg)
 
             elif entity == 'vlan':
-                # For VLANs, the 'name' column is the Switch name
                 switch_name = name
                 vlan_id = int(row[2].strip())
                 vlan_name = row[3].strip()
@@ -116,7 +108,6 @@ def parse_minimal_csv(filepath):
                     sw_cfg['vlans'].append({"id": vlan_id, "hosts": hosts, "name": vlan_name})
             
             elif entity == 'subnet':
-                # Subnets handle standalone routed networks (not tied to a switch VLAN)
                 config['subnets'].append({
                     "router": name,
                     "hosts": int(params['hosts']),
@@ -148,58 +139,50 @@ def parse_minimal_csv(filepath):
                         "a": row[2].strip(), "a_port": row[3].strip(),
                         "b": row[4].strip(), "b_port": row[5].strip()
                     })
+                    
+            elif entity == 'device':
+                config['devices'].append({
+                    "name": name,
+                    "switch": params.get('switch'),
+                    "vlan": int(params.get('vlan')),
+                    "port": params.get('port')
+                })
 
     return config
 
 def auto_assign_ips(config):
     """
-    Runs a preliminary VLSM calculation to determine the subnets, 
-    then sequentially assigns switch management IPs to prevent conflicts.
+    Calculates VLSM, maps global VLAN IDs, and sequentially assigns IPs 
+    to both Switches and Endpoint Devices from a shared tracker.
     """
-    # Generate the topology and VLSM DataFrame in memory
     routers, switches, vlsm_df = build_topology(config)
     
-    # 1. Map VLAN IDs to their calculated VLSM Subnet Rows based on Trunk links
-    vlan_to_subnet = {}
-    for link in config.get('links', []):
-        if link['type'] == 'trunk':
-            router_name = link['router']
-            sw_name = link['switch']
-            sw_cfg = next((s for s in config['switches'] if s['name'] == sw_name), None)
-            if sw_cfg:
-                for vlan in sw_cfg['vlans']:
-                    # Include the router name to match vlsm.py output format
-                    subnet_name = f"{router_name}_{sw_name}_{vlan['name']}"
-                    row_match = vlsm_df[vlsm_df['Subnet Name'] == subnet_name]
-                    if not row_match.empty:
-                        vlan_to_subnet[vlan['id']] = row_match.iloc[0]
+    # 1. Map VLAN IDs to Subnet Rows globally
+    vlan_id_to_subnet = {}
+    for _, row in vlsm_df.iterrows():
+        subnet_name = row['Subnet Name']
+        for sw in config['switches']:
+            for vlan in sw['vlans']:
+                if subnet_name.endswith(vlan['name']) or subnet_name == vlan['name']:
+                    vlan_id_to_subnet[vlan['id']] = row
 
-    # 2. Hash map to track IP assignments within each subnet to guarantee O(1) tracking
     ip_tracker = {}
 
-    # 3. Assign IPs to switches
+    # 2. Assign IPs to Switches First
     for sw in config['switches']:
         mgmt_vlan = sw.pop('_mgmt_vlan', None)
-        if not mgmt_vlan:
-            continue
+        if not mgmt_vlan: continue
             
-        subnet_row = vlan_to_subnet.get(mgmt_vlan)
-        if subnet_row is None:
-            print(f"Warning: Could not find routed subnet for VLAN {mgmt_vlan} on Switch {sw['name']}.")
-            continue
+        subnet_row = vlan_id_to_subnet.get(mgmt_vlan)
+        # Fix: Explicit None check to prevent Pandas ambiguous truth value error
+        if subnet_row is None: continue
 
         subnet_name = subnet_row['Subnet Name']
-        
-        # Initialize the tracker for this subnet if it hasn't been used yet.
-        # Router sub-interfaces use the Last Valid IP as the default gateway.
-        # Therefore, we start assigning switches sequentially from the First Valid IP.
         if subnet_name not in ip_tracker:
-            first_valid = ipaddress.IPv4Address(subnet_row['First Valid IP'])
-            ip_tracker[subnet_name] = int(first_valid)
+            ip_tracker[subnet_name] = int(ipaddress.IPv4Address(subnet_row['First Valid IP']))
 
-        # Allocate the next available IP
         allocated_ip = ipaddress.IPv4Address(ip_tracker[subnet_name])
-        ip_tracker[subnet_name] += 1 # Increment for the next switch on this VLAN
+        ip_tracker[subnet_name] += 1 
         
         sw['management'] = {
             "vlan": mgmt_vlan,
@@ -208,7 +191,63 @@ def auto_assign_ips(config):
             "default_gateway": subnet_row['Last Valid IP']
         }
 
+    # 3. Assign IPs to Endpoint Devices and inject ports
+    for dev in config.get('devices', []):
+        sw_name = dev['switch']
+        vlan_id = dev['vlan']
+        dev_port = dev.get('port')
+        
+        # Inject the explicit device port into the switch config
+        sw_cfg = next((s for s in config['switches'] if s['name'] == sw_name), None)
+        if sw_cfg and dev_port:
+            vlan_cfg = next((v for v in sw_cfg['vlans'] if v['id'] == vlan_id), None)
+            if vlan_cfg:
+                if 'ports' not in vlan_cfg:
+                    vlan_cfg['ports'] = []
+                if dev_port not in vlan_cfg['ports']:
+                    vlan_cfg['ports'].append(dev_port)
+                    
+        # Assign IP address
+        subnet_row = vlan_id_to_subnet.get(vlan_id)
+        # Fix: Explicit None check to prevent Pandas ambiguous truth value error
+        if subnet_row is None: continue
+            
+        subnet_name = subnet_row['Subnet Name']
+        if subnet_name not in ip_tracker:
+            ip_tracker[subnet_name] = int(ipaddress.IPv4Address(subnet_row['First Valid IP']))
+            
+        allocated_ip = ipaddress.IPv4Address(ip_tracker[subnet_name])
+        ip_tracker[subnet_name] += 1
+        
+        dev['ip'] = str(allocated_ip)
+        dev['mask'] = subnet_row['Subnet Mask']
+        dev['gateway'] = subnet_row['Last Valid IP']
+
     return config
+
+def generate_endpoint_documentation(config):
+    """Appends device configuration details to the command file."""
+    devices = config.get('devices', [])
+    if not devices: return
+    
+    commands_file = config.get('output', {}).get('commands', 'packet_tracer_commands.txt')
+    try:
+        with open(commands_file, 'a', encoding='utf-8') as f:
+            f.write("\n\n")
+            f.write("! " + "="*42 + "\n")
+            f.write("! ======== ENDPOINT DEVICE SETTINGS ========\n")
+            f.write("! " + "="*42 + "\n")
+            for dev in devices:
+                f.write(f"! Device: {dev['name']}\n")
+                f.write(f"! Connected to: {dev['switch']} ({dev.get('port', 'Auto')})\n")
+                f.write(f"! VLAN: {dev['vlan']}\n")
+                f.write(f"! IP Address: {dev.get('ip', 'N/A')}\n")
+                f.write(f"! Subnet Mask: {dev.get('mask', 'N/A')}\n")
+                f.write(f"! Default Gateway: {dev.get('gateway', 'N/A')}\n")
+                f.write("! " + "-"*42 + "\n")
+        print(f"Endpoint device configurations appended to {commands_file}")
+    except Exception as e:
+        print(f"Failed to append device configurations: {e}")
 
 def main():
     if len(sys.argv) < 2:
@@ -220,7 +259,7 @@ def main():
     print(f"Reading minimal layout from {csv_file}...")
     raw_config = parse_minimal_csv(csv_file)
     
-    print("Calculating VLSM and auto-assigning Switch Management IPs...")
+    print("Calculating VLSM and auto-assigning IPs...")
     final_config = auto_assign_ips(raw_config)
     
     json_out = csv_file.replace('.csv', '.json')
@@ -230,6 +269,9 @@ def main():
     
     print("Generating Packet Tracer output files...")
     generate_from_config(final_config)
+    
+    # Generate the new endpoint documentation
+    generate_endpoint_documentation(final_config)
     print("Process complete.")
 
 if __name__ == "__main__":

@@ -37,11 +37,10 @@ def generate_switch_commands(
         lines.append(" no shut")
         lines.append("")
     
-    # Assign access ports sequentially or based on vlan config
-    port_counter = 1
-    access_ranges = getattr(s, "access_ranges", [])
-
     lines.append("! -------Access ports-------")
+    
+    # 1. Process explicitly defined bulk access ranges
+    access_ranges = getattr(s, "access_ranges", [])
     if access_ranges:
         for access in access_ranges:
             vlan_id = access["vlan_id"]
@@ -50,26 +49,29 @@ def generate_switch_commands(
             lines.append(" switchport mode access")
             lines.append(f" switchport access vlan {vlan_id}")
             lines.append("")
-    else:
-        for vlan in s.vlans:
-            assigned_ports = vlan.get('ports')
-            if not assigned_ports:
-                # Find the next available FastEthernet port that is NOT a trunk
-                while True:
-                    candidate_port = f"FastEthernet0/{port_counter}"
-                    if normalize_interface_name(candidate_port) not in trunk_ports_normalized:
-                        assigned_ports = [candidate_port]
-                        port_counter += 1
-                        break
-                    port_counter += 1
-            else:
-                port_counter += len(assigned_ports)
 
-            for port in [render_interface_name(p) for p in assigned_ports]:
-                lines.append(f"interface {port}")
-                lines.append(" switchport mode access")
-                lines.append(f" switchport access vlan {vlan['id']}")
-                lines.append("")
+    # 2. Process dynamically assigned device ports or fallback logic
+    port_counter = 1
+    for vlan in s.vlans:
+        assigned_ports = vlan.get('ports', [])
+        
+        # If no specific ports and no ranges are provided, auto-assign one free port
+        if not assigned_ports and not access_ranges:
+            while True:
+                candidate_port = f"FastEthernet0/{port_counter}"
+                if normalize_interface_name(candidate_port) not in trunk_ports_normalized:
+                    assigned_ports = [candidate_port]
+                    port_counter += 1
+                    break
+                port_counter += 1
+
+        # Apply configuration for the specific ports (including endpoint devices)
+        for port in assigned_ports:
+            port_rendered = render_interface_name(port)
+            lines.append(f"interface {port_rendered}")
+            lines.append(" switchport mode access")
+            lines.append(f" switchport access vlan {vlan['id']}")
+            lines.append("")
 
     management = getattr(s, "management", None)
     if management:
@@ -87,7 +89,6 @@ def generate_switch_commands(
         lines.append("")
         
     lines.append("end")
-    # Using 'copy running-config startup-config' as per the PDF
-    # lines.append("copy running-config startup-config\n\n")
+    #lines.append("copy running-config startup-config\n\n")
     
     return "\n".join(lines)

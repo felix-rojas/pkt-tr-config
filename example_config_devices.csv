@@ -1,0 +1,38 @@
+# Format: Category, Name/LinkType, Params (Key=Value)...
+Global, Base, BaseIP=192.168.1.0, AutoStatic=True
+
+# Routers
+Router, ISP, Serial=1, IsISP=True
+Router, RFrontera, Fast=1, Gigabit=1, Serial=2, StaticRoute=0.0.0.0/0.0.0.0/Serial0/0/1
+
+# Switches
+Switch, SCompany, MgmtVlan=1, SkipVlan1=True, TrunkPorts=GigabitEthernet0/1;FastEthernet0/1;FastEthernet0/2
+Switch, SOeste, MgmtVlan=1, SkipVlan1=True, AccessRanges=10:FastEthernet0/2-6;20:FastEthernet0/7-19;30:FastEthernet0/20-24
+Switch, SEste, MgmtVlan=1, SkipVlan1=True, AccessRanges=10:FastEthernet0/2-6;20:FastEthernet0/7-19;30:FastEthernet0/20-24
+
+# VLAN definitions (Category, SwitchName, VlanID, VlanName, Hosts)
+VLAN, SCompany, 1, Administration, 6
+VLAN, SCompany, 10, Managers, 10
+VLAN, SCompany, 20, Users, 120
+VLAN, SCompany, 30, Services, 5
+
+VLAN, SOeste, 1, Administration, 6
+VLAN, SOeste, 10, Managers, 10
+VLAN, SOeste, 20, Users, 120
+VLAN, SOeste, 30, Services, 5
+
+VLAN, SEste, 1, Administration, 6
+VLAN, SEste, 10, Managers, 10
+VLAN, SEste, 20, Users, 120
+VLAN, SEste, 30, Services, 5
+
+# Endpoint Devices
+Device, PC_Manager, Switch=SCompany, Vlan=10, Port=FastEthernet0/10
+Device, Laptop_User1, Switch=SOeste, Vlan=20, Port=FastEthernet0/15
+Device, Server_Services, Switch=SEste, Vlan=30, Port=FastEthernet0/22
+
+# Links
+Link, Serial, ISP, Serial0/0/0, RFrontera, Serial0/0/1, Network=65.255.255.252/30
+Link, Trunk, RFrontera, GigabitEthernet0/0/0, SCompany, GigabitEthernet0/1
+Link, Switch, SOeste, FastEthernet0/1, SCompany, FastEthernet0/1
+Link, Switch, SEste, FastEthernet0/1, SCompany, FastEthernet0/2
