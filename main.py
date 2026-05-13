@@ -34,18 +34,36 @@ def parse_minimal_csv(filepath):
             entity = row[0].strip().lower()
             name = row[1].strip() if len(row) > 1 else ""
             
-            # Extract key=value parameters from the remaining columns
+            # Extract key=value parameters from the remaining columns.
+            # We reconstruct items that might have been accidentally split by commas 
+            # (like a Banner containing commas but no quotes).
             params = {}
+            current_key = None
             for item in row[2:]:
                 item = item.strip()
+                if not item:
+                    continue
                 if '=' in item:
                     k, v = item.split('=', 1)
-                    params[k.strip().lower()] = v.strip()
+                    current_key = k.strip().lower()
+                    params[current_key] = v.strip()
+                elif current_key:
+                    # If there's no '=', append it to the previous key's value
+                    # This gracefully handles unquoted commas in things like Banners
+                    params[current_key] += f", {item}"
 
             if entity == 'global':
                 if 'baseip' in params: config['base_ip'] = params['baseip']
                 if 'autostatic' in params: config['routing']['auto_static'] = params['autostatic'].lower() == 'true'
                 if 'ospf' in params: config['routing']['ospf'] = params['ospf'].lower() == 'true'
+                if 'dhcpenabled' in params: config['dhcp']['enabled'] = params['dhcpenabled'].lower() == 'true'
+                if 'dnsenabled' in params: config['dhcp']['dns_enabled'] = params['dnsenabled'].lower() == 'true'
+                if 'dnsserver' in params: config['dhcp']['dns_server'] = params['dnsserver']
+                
+                # --- Output Overrides ---
+                if 'commands' in params: config['output']['commands'] = params['commands']
+                if 'answers' in params: config['output']['answers'] = params['answers']
+                if 'banner' in params: config['output']['banner'] = params['banner']
 
             elif entity == 'router':
                 router_cfg = {
@@ -96,6 +114,15 @@ def parse_minimal_csv(filepath):
                 sw_cfg = next((s for s in config['switches'] if s['name'] == switch_name), None)
                 if sw_cfg is not None:
                     sw_cfg['vlans'].append({"id": vlan_id, "hosts": hosts, "name": vlan_name})
+            
+            elif entity == 'subnet':
+                # Subnets handle standalone routed networks (not tied to a switch VLAN)
+                config['subnets'].append({
+                    "router": name,
+                    "hosts": int(params['hosts']),
+                    "port": params.get('port'),
+                    "name": params.get('name', '')
+                })
 
             elif entity == 'link':
                 link_type = name.lower()
