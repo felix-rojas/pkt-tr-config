@@ -81,6 +81,6 @@ def generate_switch_commands(
         
     lines.append("end")
     # Using 'copy running-config startup-config' as per the PDF
-    lines.append("copy running-config startup-config\n\n")
+    # lines.append("copy running-config startup-config\n\n")
     
     return "\n".join(lines)
